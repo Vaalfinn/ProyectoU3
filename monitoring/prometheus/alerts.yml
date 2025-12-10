@@ -1,0 +1,133 @@
+groups:
+  - name: transaction_validator_alerts
+    interval: 30s
+    rules:
+      # Alerta de disponibilidad
+      - alert: ServiceDown
+        expr: up{job=~"transaction-validator.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: transaction-validator
+        annotations:
+          summary: "Transaction Validator está caído"
+          description: "El servicio {{ $labels.job }} no está respondiendo desde hace {{ $value }} minutos."
+
+      # Alerta de SLO - Disponibilidad
+      - alert: AvailabilitySLOBreach
+        expr: |
+          (
+            sum(rate(transaction_validator_requests_total{status=~"2.."}[5m]))
+            /
+            sum(rate(transaction_validator_requests_total[5m]))
+          ) < 0.997
+        for: 5m
+        labels:
+          severity: warning
+          slo: availability
+        annotations:
+          summary: "Disponibilidad por debajo del SLO (99.7%)"
+          description: "La disponibilidad actual es {{ $value | humanizePercentage }}. SLO objetivo: 99.7%"
+
+      # Alerta de latencia P95
+      - alert: LatencyP95High
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(transaction_validator_request_duration_seconds_bucket[5m])) by (le)
+          ) > 0.25
+        for: 5m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "Latencia P95 excede el SLO"
+          description: "La latencia P95 es {{ $value }}s. SLO objetivo: < 250ms"
+
+      # Alerta de latencia P99
+      - alert: LatencyP99Critical
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(transaction_validator_request_duration_seconds_bucket[5m])) by (le)
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: critical
+          slo: latency
+        annotations:
+          summary: "Latencia P99 crítica"
+          description: "La latencia P99 es {{ $value }}s. SLO objetivo: < 500ms"
+
+      # Alerta de tasa de errores
+      - alert: ErrorRateHigh
+        expr: |
+          (
+            sum(rate(transaction_validator_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(transaction_validator_requests_total[5m]))
+          ) > 0.001
+        for: 5m
+        labels:
+          severity: warning
+          slo: error_rate
+        annotations:
+          summary: "Tasa de errores excede el SLO (0.1%)"
+          description: "La tasa de errores actual es {{ $value | humanizePercentage }}. SLO objetivo: < 0.1%"
+
+      # Alerta de errores críticos
+      - alert: ErrorRateCritical
+        expr: |
+          (
+            sum(rate(transaction_validator_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(transaction_validator_requests_total[5m]))
+          ) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+          slo: error_rate
+        annotations:
+          summary: "Tasa de errores crítica (>1%)"
+          description: "La tasa de errores es {{ $value | humanizePercentage }}. Acción inmediata requerida."
+
+      # Alerta de transacciones activas
+      - alert: HighActiveTransactions
+        expr: transaction_validator_active_transactions > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alto número de transacciones activas"
+          description: "Hay {{ $value }} transacciones activas. Posible cuello de botella."
+
+      # Alerta de budget de errores consumido
+      - alert: ErrorBudgetExhausted
+        expr: |
+          (
+            1 - (
+              sum(rate(transaction_validator_requests_total{status=~"2.."}[30d]))
+              /
+              sum(rate(transaction_validator_requests_total[30d]))
+            )
+          ) > 0.003
+        for: 1h
+        labels:
+          severity: critical
+          slo: error_budget
+        annotations:
+          summary: "Presupuesto de errores mensual consumido"
+          description: "El presupuesto de errores mensual ha sido superado. Disponibilidad: {{ $value | humanizePercentage }}"
+
+      # Alerta de validaciones fallidas
+      - alert: HighValidationFailureRate
+        expr: |
+          (
+            sum(rate(transaction_validations_total{status="rejected"}[5m]))
+            /
+            sum(rate(transaction_validations_total[5m]))
+          ) > 0.3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alta tasa de validaciones rechazadas"
+          description: "El {{ $value | humanizePercentage }} de las transacciones están siendo rechazadas."

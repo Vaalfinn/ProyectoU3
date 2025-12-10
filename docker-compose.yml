@@ -1,0 +1,221 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # APLICACIÓN - TRANSACTION VALIDATOR
+  # ============================================
+  
+  # Servicio Blue (Versión actual en producción)
+  transaction-validator-blue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: transaction-validator-blue
+    environment:
+      - ENVIRONMENT=production
+      - APP_VERSION=1.0.0
+      - DEPLOYMENT_COLOR=blue
+      - JAEGER_HOST=jaeger
+      - JAEGER_PORT=6831
+    ports:
+      - "8000:8000"
+    networks:
+      - payflow-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    labels:
+      - "deployment.color=blue"
+      - "service.name=transaction-validator"
+
+  # Servicio Green (Nueva versión para despliegue)
+  transaction-validator-green:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: transaction-validator-green
+    environment:
+      - ENVIRONMENT=production
+      - APP_VERSION=1.1.0
+      - DEPLOYMENT_COLOR=green
+      - JAEGER_HOST=jaeger
+      - JAEGER_PORT=6831
+    ports:
+      - "8001:8000"
+    networks:
+      - payflow-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    labels:
+      - "deployment.color=green"
+      - "service.name=transaction-validator"
+    profiles:
+      - green-deployment
+
+  # ============================================
+  # MONITOREO - MÉTRICAS
+  # ============================================
+  
+  prometheus:
+    image: prom/prometheus:v2.48.1
+    container_name: prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - payflow-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - payflow-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # ============================================
+  # TRAZAS DISTRIBUIDAS
+  # ============================================
+  
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: jaeger
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"
+      - "14250:14250"
+      - "9411:9411"
+    networks:
+      - payflow-network
+    restart: unless-stopped
+
+  # ============================================
+  # LOGS - ELK STACK
+  # ============================================
+  
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.3
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - payflow-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.3
+    container_name: logstash
+    volumes:
+      - ./monitoring/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+      - ./monitoring/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml
+    ports:
+      - "5000:5000/tcp"
+      - "5000:5000/udp"
+      - "9600:9600"
+    networks:
+      - payflow-network
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.3
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    networks:
+      - payflow-network
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ============================================
+  # NGINX - LOAD BALANCER (Blue/Green Switch)
+  # ============================================
+  
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nginx-lb
+    volumes:
+      - ./monitoring/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./monitoring/nginx/blue.conf:/etc/nginx/conf.d/blue.conf
+      - ./monitoring/nginx/green.conf:/etc/nginx/conf.d/green.conf
+    ports:
+      - "9080:9080"
+      - "9443:9443"
+    networks:
+      - payflow-network
+    depends_on:
+      - transaction-validator-blue
+    restart: unless-stopped
+
+networks:
+  payflow-network:
+    driver: bridge
+    name: payflow-network
+
+volumes:
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  elasticsearch-data:
+    driver: local
