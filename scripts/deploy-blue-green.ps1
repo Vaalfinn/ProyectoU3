@@ -239,7 +239,6 @@ Write-Host "  1. Monitorear dashboards en Grafana: http://localhost:3000"
 Write-Host "  2. Verificar logs en Kibana: http://localhost:5601"
 Write-Host "  3. Revisar trazas en Jaeger: http://localhost:16686"
 Write-Host ""
-
 # Guardar estado del despliegue
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 Add-Content -Path "deployment-history.log" -Value "$timestamp - Deployed to GREEN successfully"
