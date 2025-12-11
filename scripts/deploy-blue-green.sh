@@ -4,7 +4,6 @@
 # Este script implementa una estrategia de despliegue sin downtime
 
 set -e
-
 # Colores para output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
