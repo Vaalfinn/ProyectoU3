@@ -80,7 +80,7 @@ Transaction-Validator/
 
 1. Clonar el repositorio:
 ```bash
-git clone https://github.com/AlanGaBer11/ProyectoUnidad3
+git clone https://github.com/VaalFinn/ProyectoU3
 cd payflow-transaction-validator
 ```
 
